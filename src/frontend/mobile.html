@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>传感器采集端</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { touch-action: manipulation; }
+        .sensor-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
+        .btn-active { transform: scale(0.98); }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex flex-col">
+    <!-- 状态栏 -->
+    <div class="bg-slate-800 px-4 py-3 flex justify-between items-center shadow-md">
+        <div class="font-bold text-lg">📱 采集端</div>
+        <div class="flex items-center gap-2 text-sm">
+            <span id="ws-dot" class="w-3 h-3 rounded-full bg-red-500"></span>
+            <span id="ws-text">未连接</span>
+        </div>
+    </div>
+
+    <div class="flex-1 p-4 space-y-4 overflow-y-auto">
+        <!-- 连接设置 -->
+        <div class="bg-slate-800 rounded-xl p-4">
+            <label class="text-xs text-gray-400 uppercase font-semibold">服务器地址</label>
+            <div class="flex gap-2 mt-2">
+                <input id="server-input" type="text" value="" placeholder="ws://192.168.x.x:8000"
+                    class="flex-1 bg-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500">
+                <button onclick="toggleConnection()" id="conn-btn"
+                    class="bg-blue-600 px-4 py-2 rounded-lg text-sm font-semibold active:bg-blue-700">
+                    连接
+                </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">填写电脑局域网IP，如 ws://192.168.1.5:8000</p>
+        </div>
+
+        <!-- 权限请求 -->
+        <div class="bg-slate-800 rounded-xl p-4">
+            <h3 class="font-semibold mb-3">🔐 传感器权限</h3>
+            <button onclick="requestPermission()" id="perm-btn"
+                class="w-full bg-emerald-600 py-3 rounded-lg font-semibold active:bg-emerald-700">
+                请求传感器权限 (iOS必需)
+            </button>
+            <p class="text-xs text-gray-500 mt-2">iOS 13+ 需要点击授权才能读取加速度计</p>
+        </div>
+
+        <!-- 控制按钮 -->
+        <div class="grid grid-cols-2 gap-3">
+            <button onclick="startSending()" id="start-btn" disabled
+                class="bg-green-600 py-4 rounded-xl font-bold text-lg active:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                ▶️ 开始发送
+            </button>
+            <button onclick="stopSending()" id="stop-btn" disabled
+                class="bg-red-600 py-4 rounded-xl font-bold text-lg active:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                ⏹️ 停止发送
+            </button>
+        </div>
+
+        <!-- 实时预览 -->
+        <div class="sensor-card rounded-xl p-4">
+            <h3 class="font-semibold mb-3 text-white/90">📊 实时数据预览</h3>
+            <div class="space-y-2 text-sm font-mono">
+                <div class="flex justify-between">
+                    <span class="text-white/70">加速度</span>
+                    <span id="disp-acc">[0.00, 0.00, 0.00]</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-white/70">陀螺仪</span>
+                    <span id="disp-gyro">[0.00, 0.00, 0.00]</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-white/70">GPS</span>
+                    <span id="disp-gps">--, --</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-white/70">发送频率</span>
+                    <span id="disp-freq">0 Hz</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-white/70">总包数</span>
+                    <span id="disp-count">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 日志 -->
+        <div class="bg-slate-800 rounded-xl p-4">
+            <h3 class="font-semibold mb-2 text-sm">📝 日志</h3>
+            <div id="log" class="text-xs font-mono text-gray-400 h-32 overflow-y-auto space-y-1"></div>
+        </div>
+    </div>
+
+    <script>
+        // ========== 配置 ==========
+        let ws = null;
+        let sending = false;
+        let sendInterval = null;
+        let gpsWatchId = null;
+        let packetCount = 0;
+        let lastSecondCount = 0;
+
+        let sensorData = {
+            acc: [0, 0, 0],
+            gyro: [0, 0, 0],
+            gps: { lat: null, lng: null }
+        };
+
+        // 自动填充当前服务器地址
+        const host = window.location.host;
+        //document.getElementById('server-input').value = `ws://${host}/ws/mobile`;
+        document.getElementById('server-input').value = `wss://${host}/ws/mobile`;
+
+        // ========== WebSocket ==========
+        function toggleConnection() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+                return;
+            }
+            const url = document.getElementById('server-input').value;
+            log(`正在连接 ${url}...`);
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                updateConnStatus(true);
+                log('✅ 已连接服务器');
+                document.getElementById('start-btn').disabled = false;
+            };
+
+            ws.onclose = () => {
+                updateConnStatus(false);
+                log('❌ 连接已关闭');
+                stopSending();
+                document.getElementById('start-btn').disabled = true;
+            };
+
+            ws.onerror = (e) => {
+                log('⚠️ 连接错误，检查服务器地址');
+            };
+        }
+
+        function updateConnStatus(connected) {
+            const dot = document.getElementById('ws-dot');
+            const text = document.getElementById('ws-text');
+            const btn = document.getElementById('conn-btn');
+            if (connected) {
+                dot.className = 'w-3 h-3 rounded-full bg-green-500 shadow-lg shadow-green-500/50';
+                text.textContent = '已连接';
+                btn.textContent = '断开';
+                btn.className = 'bg-gray-600 px-4 py-2 rounded-lg text-sm font-semibold';
+            } else {
+                dot.className = 'w-3 h-3 rounded-full bg-red-500';
+                text.textContent = '未连接';
+                btn.textContent = '连接';
+                btn.className = 'bg-blue-600 px-4 py-2 rounded-lg text-sm font-semibold';
+            }
+        }
+
+        // ========== 传感器权限 (iOS) ==========
+        async function requestPermission() {
+            if (typeof DeviceMotionEvent !== 'undefined' &&
+                typeof DeviceMotionEvent.requestPermission === 'function') {
+                try {
+                    const response = await DeviceMotionEvent.requestPermission();
+                    if (response === 'granted') {
+                        log('✅ 传感器权限已获取');
+                        startSensors();
+                    } else {
+                        log('❌ 权限被拒绝');
+                    }
+                } catch (e) {
+                    log('❌ 请求权限失败: ' + e.message);
+                }
+            } else {
+                log('ℹ️ 无需请求权限，直接启动');
+                startSensors();
+            }
+        }
+
+        // ========== 启动传感器监听 ==========
+        function startSensors() {
+            // 加速度 + 陀螺仪
+            window.addEventListener('devicemotion', (event) => {
+                try {
+                    // 优先用不含重力的线性加速度（和你训练数据的物理量一致）
+                    // iOS 某些情况 acceleration 为 null，再回退到 accelerationIncludingGravity
+                    const acc = event.acceleration || event.accelerationIncludingGravity;
+                    const gyro = event.rotationRate;
+
+                    if (!acc && !gyro) {
+                        log('⚠️ 本次 devicemotion 事件未读到加速度/陀螺仪');
+                        return;
+                    }
+
+                    if (acc) {
+                        sensorData.acc = [
+                            acc.x || 0,
+                            acc.y || 0,
+                            acc.z || 0
+                        ];
+                    }
+                    if (gyro) {
+                        sensorData.gyro = [
+                            gyro.alpha || 0,
+                            gyro.beta || 0,
+                            gyro.gamma || 0
+                        ];
+                    }
+                    updateDisplay();
+                } catch (e) {
+                    log('❌ 传感器回调错误: ' + e.message);
+                }
+            });
+
+            // GPS
+            if (navigator.geolocation) {
+                gpsWatchId = navigator.geolocation.watchPosition(
+                    (pos) => {
+                        sensorData.gps = {
+                            lat: pos.coords.latitude,
+                            lng: pos.coords.longitude
+                        };
+                        updateDisplay();
+                    },
+                    (err) => {
+                        log('GPS 错误: ' + err.message);
+                    },
+                    { enableHighAccuracy: true, maximumAge: 1000 }
+                );
+            } else {
+                log('⚠️ 设备不支持 GPS');
+            }
+
+            log('🚀 传感器已启动');
+        }
+
+        // ========== 发送控制 ==========
+        function startSending() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('请先连接服务器');
+                return;
+            }
+            sending = true;
+            document.getElementById('start-btn').disabled = true;
+            document.getElementById('stop-btn').disabled = false;
+
+            // 通知后端：开始一段新录制
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "start", timestamp: Date.now() }));
+            }
+
+            // 20ms = 50Hz
+            sendInterval = setInterval(() => {
+                const packet = {
+                    timestamp: Date.now(),
+                    acc: sensorData.acc.map(v => parseFloat(v.toFixed(4))),
+                    gyro: sensorData.gyro.map(v => parseFloat(v.toFixed(4))),
+                    gps: sensorData.gps
+                };
+                ws.send(JSON.stringify(packet));
+                packetCount++;
+            }, 20);
+
+            // 频率统计
+            setInterval(() => {
+                if (sending) {
+                    document.getElementById('disp-freq').textContent = lastSecondCount + ' Hz';
+                    lastSecondCount = 0;
+                }
+            }, 1000);
+
+            log('▶️ 开始发送数据 (50Hz)');
+        }
+
+        function stopSending() {
+            sending = false;
+            if (sendInterval) clearInterval(sendInterval);
+            // 通知后端：停止录制并做最终判定
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "stop", timestamp: Date.now() }));
+            }
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('stop-btn').disabled = true;
+            log('⏹️ 已停止发送，等待判定...');
+        }
+
+        // ========== 显示更新 ==========
+        function updateDisplay() {
+            document.getElementById('disp-acc').textContent =
+                `[${sensorData.acc.map(v => v.toFixed(2)).join(', ')}]`;
+            document.getElementById('disp-gyro').textContent =
+                `[${sensorData.gyro.map(v => v.toFixed(2)).join(', ')}]`;
+            document.getElementById('disp-gps').textContent =
+                sensorData.gps.lat ? `${sensorData.gps.lat.toFixed(5)}, ${sensorData.gps.lng.toFixed(5)}` : '--, --';
+            document.getElementById('disp-count').textContent = packetCount;
+            lastSecondCount++;
+        }
+
+        function log(msg) {
+            const container = document.getElementById('log');
+            const div = document.createElement('div');
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+    </script>
+</body>
+</html>
