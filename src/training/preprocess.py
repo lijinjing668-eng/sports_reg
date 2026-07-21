@@ -19,6 +19,32 @@ def apply_filter(data, cutoff=20, fs=50, order=4):
     return filtfilt(b, a, data)
 
 
+def trim_and_clean(arr, trim_sec=2.0, fs=50, sigma=4.0):
+    """
+    数据清洗（训练用）：
+    1. 掐掉首尾 trim_sec 秒（开始/结束时的异动）
+    2. 逐通道做 4-sigma 异常值裁剪（替换为通道均值）
+    返回清洗后的 ndarray。
+    """
+    trim_frames = int(trim_sec * fs)
+    if len(arr) <= trim_frames * 2:
+        # 太短不掐
+        pass
+    else:
+        arr = arr[trim_frames:-trim_frames]
+
+    # 逐通道清洗异常值
+    cleaned = arr.copy()
+    for c in range(arr.shape[1]):
+        col = cleaned[:, c]
+        mean_c, std_c = np.mean(col), np.std(col)
+        if std_c < 1e-9:
+            continue
+        mask = np.abs(col - mean_c) > sigma * std_c
+        cleaned[mask, c] = mean_c  # 替换为均值而非删除（保持时序）
+    return cleaned
+
+
 # ============================================
 # 旧版 6 轴合并加载 (向后兼容, train_old.py 用)
 # ============================================

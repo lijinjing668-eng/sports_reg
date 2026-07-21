@@ -153,6 +153,14 @@ class Classifier:
         for c in range(filt.shape[1]):
             filt[:, c] = _lowpass(filt[:, c])
 
+        # 异常值裁剪 (5-sigma, 温和清洗)
+        for c in range(filt.shape[1]):
+            col = filt[:, c]
+            mean_c, std_c = np.mean(col), np.std(col)
+            if std_c > 1e-9:
+                clip_mask = np.abs(col - mean_c) > 5.0 * std_c
+                filt[clip_mask, c] = mean_c
+
         # 切窗
         windows = []
         for i in range(0, len(filt) - self.window + 1, self.stride):
