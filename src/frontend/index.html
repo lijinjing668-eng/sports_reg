@@ -378,8 +378,13 @@
                     modeBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-red-400"></span><span>数据不足</span>';
                     log('⚠️ ' + (data.message || '数据不足，无法判定'));
                 } else {
-                    modeBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-blue-300"></span><span>最终判定</span>';
-                    log(`✅ 判定结果: ${activity} | 置信度 ${((data.confidence||0)*100).toFixed(1)}% | 时长 ${data.duration_sec||0}s | ${data.sample_count||0} 帧`);
+                    const mode = data.mode || "fusion";
+                    modeBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-blue-300"></span><span>${mode}</span>`;
+                    let detail = `✅ 判定: ${activity} | 融合置信度 ${((data.confidence||0)*100).toFixed(1)}%`;
+                    if (data.acc_pred) detail += ` | 加速度→${data.acc_pred}(${((data.acc_conf||0)*100).toFixed(0)}%)`;
+                    if (data.gyro_pred) detail += ` | 陀螺仪→${data.gyro_pred}(${((data.gyro_conf||0)*100).toFixed(0)}%)`;
+                    detail += ` | ${data.duration_sec||0}s / ${data.sample_count||0}帧`;
+                    log(detail);
                 }
                 return;
             }

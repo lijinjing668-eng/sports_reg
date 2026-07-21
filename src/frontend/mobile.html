@@ -180,16 +180,22 @@
 
         // ========== 启动传感器监听 ==========
         function startSensors() {
-            // 加速度 + 陀螺仪
+            // 加速度 + 陀螺仪 (晚融合：两条独立流，后端各自处理)
+            let accTypeLogged = false;
             window.addEventListener('devicemotion', (event) => {
                 try {
-                    // 优先用不含重力的线性加速度（和你训练数据的物理量一致）
+                    // 优先用不含重力的线性加速度（和训练数据 Physics Toolbox 一致）
                     // iOS 某些情况 acceleration 为 null，再回退到 accelerationIncludingGravity
-                    const acc = event.acceleration || event.accelerationIncludingGravity;
+                    const rawAcc = event.acceleration;
+                    const acc = rawAcc || event.accelerationIncludingGravity;
                     const gyro = event.rotationRate;
 
+                    if (!accTypeLogged) {
+                        accTypeLogged = true;
+                        log(rawAcc ? '✅ 使用线性加速度 (去重力)' : '⚠️ 回退到含重力加速度, 准确率可能下降');
+                    }
+
                     if (!acc && !gyro) {
-                        log('⚠️ 本次 devicemotion 事件未读到加速度/陀螺仪');
                         return;
                     }
 
